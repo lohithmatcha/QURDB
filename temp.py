@@ -1,0 +1,172 @@
+#langchain_helper.py--template
+
+#hbhbjwe
+from few_shots import few_shots
+import os
+from dotenv import load_dotenv
+import re
+from decimal import Decimal
+
+# Newer imports
+from langchain.schema import SystemMessage, HumanMessage, AIMessage
+from langchain_google_genai import ChatGoogleGenerativeAI  # from langchain_google_genai
+from langchain_experimental.sql import SQLDatabaseChain
+from langchain.utilities import SQLDatabase
+from langchain.vectorstores import Chroma
+from langchain.embeddings import HuggingFaceEmbeddings  # check version
+from langchain.prompts.prompt import PromptTemplate
+from langchain.prompts import FewShotPromptTemplate, SemanticSimilarityExampleSelector
+
+load_dotenv()
+
+def format_database_result_with_llm(question, raw_result, db_schema=""):
+    """
+    Use LLM to format raw database results into user-friendly responses
+    """
+    try:
+        # Create a prompt for the LLM to format the result
+        llm = ChatGoogleGenerativeAI(
+            api_key=os.environ["GOOGLE_API_KEY"],
+            model="models/gemini-2.0-flash-001",
+            temperature=0.1
+        )
+        
+        # Convert raw result to string for LLM processing
+        result_str = str(raw_result)
+        
+            prompt = f"""
+    You are a helpful assistant that converts raw database query results into user-friendly, natural language responses.
+
+    Question asked: "{question}"
+
+    Raw database result: {result_str}
+
+    Database schema context: {db_schema}
+
+    Please provide a clear, natural language answer that directly addresses the question. 
+    - Use proper formatting for numbers (commas, currency symbols)
+    - Be conversational and helpful
+    - Don't mention technical details like "database result" or "query"
+    - Make it sound like a natural response to the user's question
+
+    Examples:
+    - If result is [(Decimal('999'),)] and question is about count: "There are 999 items"
+    - If result is [(Decimal('29.99'),)] and question is about price: "The average price is $29.99"
+    - If result is [('Nike',)] and question is about brand: "The brand is Nike"
+
+    Response:"""
+        
+        response = llm.invoke(prompt)
+        return response.content.strip()
+        
+    except Exception as e:
+        # Fallback to basic formatting if LLM fails
+        return create_user_friendly_response(question, raw_result)
+
+def create_user_friendly_response(question, raw_result):
+    """
+    Fallback function for basic formatting
+    """
+    try:
+        if isinstance(raw_result, (list, tuple)) and len(raw_result) > 0:
+            if isinstance(raw_result[0], (list, tuple)) and len(raw_result[0]) > 0:
+                value = raw_result[0][0]
+            else:
+                value = raw_result[0]
+            
+            if isinstance(value, Decimal):
+                value = float(value)
+            
+            return f"The result is: *{value}*"
+        else:
+            return f"The result is: *{str(raw_result)}*"
+    except Exception as e:
+        return f"Error processing result: {str(e)}"
+
+def format_database_result(result, question=""):
+    """
+    Format database results into user-friendly text using LLM
+    """
+    # Get database schema for better context
+    db_schema = """
+    Database: atliq_tshirts
+    Table: t_shirts
+    Columns:
+    - t_shirt_id (INT): Unique identifier
+    - brand (VARCHAR): Brand name (Nike, Levi, Adidas, etc.)
+    - color (VARCHAR): Color (White, Black, Red, Blue, etc.)
+    - size (VARCHAR): Size (XS, S, M, L, XL, XXL)
+    - price (DECIMAL): Price in dollars
+    - stock_quantity (INT): Number of items in stock
+    """
+    
+    return format_database_result_with_llm(question, result, db_schema)
+
+def get_few_shot_db_chain():
+    # Database credentials
+    db_user = os.getenv("DB_USER", "root")
+    db_password = os.getenv("DB_PASS", "9030")
+    db_host = os.getenv("DB_HOST", "localhost")
+    db_name = os.getenv("DB_NAME", "atliq_tshirts")
+
+    # Create SQLDatabase
+    db = SQLDatabase.from_uri(f"mysql+pymysql://{db_user}:{db_password}@{db_host}/{db_name}",
+                              sample_rows_in_table_info=3)
+    # Use new LLM / Chat model
+    llm = ChatGoogleGenerativeAI(
+        api_key=os.environ["GOOGLE_API_KEY"],
+        model="models/gemini-2.0-flash-001",  # or other supported model
+        temperature=0.1
+    )
+    # Build embeddings & example selector (for few shot)
+    embeddings = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
+    # Prepare your few_shots (list of dicts with keys matching the example prompt)
+    from few_shots import few_shots  
+    to_vectorize = [" ".join(example.values()) for example in few_shots]
+    vectorstore = Chroma.from_texts(to_vectorize, embeddings, metadatas=few_shots)
+    example_selector = SemanticSimilarityExampleSelector(
+        vectorstore=vectorstore,
+        k=2
+    )
+    # Custom prompt templates
+        mysql_prompt = """You are a MySQL expert. Given an input question, create a syntactically correct MySQL query to run.
+
+    Unless the user specifies in the question a specific number of examples to obtain, query for at most {top_k} results using the LIMIT clause as per MySQL. You can order the results to return the most informative data in the database.
+    Never query for all columns from a table. You must query only the columns that are needed to answer the question. Wrap each column name in backticks (`) to denote them as delimited identifiers.
+    Pay attention to use only the column names you can see in the tables below. Be careful to not query for columns that do not exist. Also, pay attention to which column is in which table.
+    Pay attention to use CURDATE() function to get the current date, if the question involves "today".
+
+    IMPORTANT: Return ONLY the SQL query without any markdown formatting, code blocks, or backticks. Just the raw SQL query.
+
+    Use the following format:
+
+    Question: {input}
+    SQLQuery: <your query here>
+    SQLResult: <result>
+    Answer: <final answer here>
+
+    IMPORTANT: Return only the SQL query part.
+    """
+    example_prompt = PromptTemplate(
+        input_variables=["Question", "SQLQuery", "SQLResult", "Answer"],
+        template="\nQuestion: {Question}\nSQLQuery: {SQLQuery}\nSQLResult: {SQLResult}\nAnswer: {Answer}"
+    )
+
+    few_shot_prompt = FewShotPromptTemplate(
+        example_selector=example_selector,
+        example_prompt=example_prompt,
+        prefix=mysql_prompt,
+        suffix="{input}\n\nHere are the tables:\n{table_info}\n\nRespond as above.\n",
+        input_variables=["input", "table_info", "top_k"]
+    )
+
+    # Build the chain
+    chain = SQLDatabaseChain.from_llm(
+        llm=llm,
+        db=db,
+        prompt=few_shot_prompt,
+        return_direct=True,  # Return direct database results
+        verbose=True
+    )
+
+    return chain
