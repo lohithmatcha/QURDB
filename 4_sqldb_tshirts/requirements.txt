@@ -5,7 +5,11 @@ tiktoken==0.4.0
 faiss-cpu
 protobuf
 langchain_experimental
+langchain-google-genai
 mysql-connector-python
 pymysql
 sentence-transformers
 chromadb
+plotly>=5.17.0
+pandas>=2.0.0
+openpyxl

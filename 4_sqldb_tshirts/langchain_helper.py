@@ -3,6 +3,11 @@ import os
 from dotenv import load_dotenv
 import re
 from decimal import Decimal
+import warnings
+import time
+
+# Suppress FutureWarning from PyTorch/transformers
+warnings.filterwarnings("ignore", category=FutureWarning, module="torch")
 
 # Newer imports
 from langchain.schema import SystemMessage, HumanMessage, AIMessage
@@ -20,18 +25,24 @@ def format_database_result_with_llm(question, raw_result, db_schema=""):
     """
     Use LLM to format raw database results into user-friendly responses
     """
-    try:
-        # Create a prompt for the LLM to format the result
-        llm = ChatGoogleGenerativeAI(
-            api_key=os.environ["GOOGLE_API_KEY"],
-            model="models/gemini-2.0-flash-001",
-            temperature=0.1
-        )
-        
-        # Convert raw result to string for LLM processing
-        result_str = str(raw_result)
-        
-        prompt = f"""
+    max_retries = 3
+    retry_delay = 2  # seconds
+    
+    for attempt in range(max_retries):
+        try:
+            # Create a prompt for the LLM to format the result
+            llm = ChatGoogleGenerativeAI(
+                google_api_key=os.environ.get("GOOGLE_API_KEY"),
+                model="models/gemini-2.5-flash",  # Using standard model name with prefix
+                temperature=0.1,
+                max_retries=3,
+                timeout=60
+            )
+            
+            # Convert raw result to string for LLM processing
+            result_str = str(raw_result)
+            
+            prompt = f"""
 You are a helpful assistant that converts raw database query results into user-friendly, natural language responses.
 
 Question asked: "{question}"
@@ -52,13 +63,27 @@ Examples:
 - If result is [('Nike',)] and question is about brand: "The brand is Nike"
 
 Response:"""
-        
-        response = llm.invoke(prompt)
-        return response.content.strip()
-        
-    except Exception as e:
-        # Fallback to basic formatting if LLM fails
-        return create_user_friendly_response(question, raw_result)
+            
+            response = llm.invoke(prompt)
+            return response.content.strip()
+            
+        except Exception as e:
+            error_str = str(e).lower()
+            # Check if it's a rate limit error
+            if "429" in error_str or "resource exhausted" in error_str or "quota" in error_str:
+                if attempt < max_retries - 1:
+                    wait_time = retry_delay * (2 ** attempt)  # Exponential backoff
+                    time.sleep(wait_time)
+                    continue
+                else:
+                    # Final attempt failed, use fallback
+                    return create_user_friendly_response(question, raw_result)
+            else:
+                # Other errors, use fallback immediately
+                return create_user_friendly_response(question, raw_result)
+    
+    # If all retries failed, use fallback
+    return create_user_friendly_response(question, raw_result)
 
 def create_user_friendly_response(question, raw_result):
     """
@@ -110,11 +135,17 @@ def get_few_shot_db_chain():
     db = SQLDatabase.from_uri(f"mysql+pymysql://{db_user}:{db_password}@{db_host}/{db_name}",
                               sample_rows_in_table_info=3)
 
-    # Use new LLM / Chat model
+    # Use new LLM / Chat model with proper error handling
+    google_api_key = os.environ.get("GOOGLE_API_KEY")
+    if not google_api_key:
+        raise ValueError("GOOGLE_API_KEY not found in environment variables. Please set it in your .env file.")
+    
     llm = ChatGoogleGenerativeAI(
-        api_key=os.environ["GOOGLE_API_KEY"],
-        model="models/gemini-2.0-flash-001",  # or other supported model
-        temperature=0.1
+        google_api_key=google_api_key,
+        model="models/gemini-2.5-flash",  # Using standard model name with prefix
+        temperature=0.1,
+        max_retries=3,
+        timeout=60
     )
 
     # Build embeddings & example selector (for few shot)

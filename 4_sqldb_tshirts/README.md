@@ -30,7 +30,8 @@ The system is intelligent enough to generate accurate queries for given question
   - Chromadb as a vector store
   - **Browser Speech Recognition** (Web Speech API) 🎤
   - Few shot learning
-- In the UI, store manager can **ask questions by typing or speaking** in any language and it will produce the answers
+  - **Intelligent Visualizations** 📊 (Bar charts, Pie charts, Line graphs based on data)
+- In the UI, store manager can **ask questions by typing or speaking** in any language and it will produce the answers with **intelligent visual representations**
 
 
 ## Installation
@@ -102,13 +103,30 @@ streamlit run main.py
   - How many t-shirts do we have left for Nike in XS size and white color?
   - How much is the total price of the inventory for all S-size t-shirts?
   - How much sales amount will be generated if we sell all small size adidas shirts today after discounts?
+
+## 🎨 Intelligent Visualization Features
+
+The system automatically selects the best visualization type based on your question and data:
+
+- **📊 Bar Charts**: For comparing categories, rankings, and distributions
+- **🥧 Pie Charts**: For showing percentages and proportions
+- **📈 Line Charts**: For trends and time-series data
+- **📋 Tables**: For detailed tabular data
+- **💎 Metric Cards**: For single value results displayed prominently
+
+**Examples:**
+- "Which brand has the most stock?" → Bar chart comparing brands
+- "What's the breakdown by color?" → Pie chart showing color distribution
+- "Show me top 5 products" → Bar chart with rankings
+- "How many Nike shirts?" → Large metric card
   
 ## Project Structure
 
-- `main.py`: The main Streamlit application script with voice input support
-- `langchain_helper.py`: Contains all the langchain code for database queries
-- `speech_recognition.html`: Browser-based speech recognition UI
+- `main.py`: The main Streamlit application script with voice input support and visualization
+- `langchain_helper.py`: Contains all the langchain code for database queries and AI formatting
+- `visualization_helper.py`: Intelligent chart selection and visualization creation
 - `few_shots.py`: Contains few shot prompts for better query generation
+- `speech_recognition.html`: Browser-based speech recognition UI
 - `requirements.txt`: A list of required Python packages for the project
 - `.env`: Configuration file for storing your Google API key and database credentials
 - `database/db_creation_atliq_t_shirts.sql`: SQL script to create the database schema
@@ -121,4 +139,5 @@ streamlit run main.py
 4. **LangChain**: Converts your question to SQL
 5. **Database Query**: Executes the query on MySQL database
 6. **AI Formatting**: Formats the result into a natural language response
-7. **Display**: Shows the answer in a user-friendly format
+7. **Intelligent Visualization**: Automatically selects the best chart type (bar, pie, line, table) based on your data
+8. **Display**: Shows both text answer and visual representation
